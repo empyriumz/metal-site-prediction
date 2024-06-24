@@ -1,21 +1,10 @@
-#!/usr/bin/env python3
-
-import glob
 import argparse
 import time
-
 import torch
-import torch.nn as nn
 from utils.helpers import *
-
 from utils.voxelization import processStructures as processStructures
 from utils.model import Model
-from moleculekit.tools.voxeldescriptors import getVoxelDescriptors, viewVoxelFeatures
-
-from moleculekit.util import boundingBox
-
-from scipy.spatial import distance
-
+from moleculekit.tools.voxeldescriptors import viewVoxelFeatures
 import warnings
 
 
@@ -87,7 +76,11 @@ if __name__ == "__main__":
 
     model = Model()
     model.to(device)
-    model.load_state_dict(torch.load(f"weights/metal_0.5A_v3_d0.2_16Abox.pth"))
+    model.load_state_dict(
+        torch.load(
+            f"/host/metal-site-prediction/Metal3D/weights/metal_0.5A_v3_d0.2_16Abox.pth"
+        )
+    )
     voxels.to(device)
     model.eval()
     outputs = torch.zeros([voxels.size()[0], 1, 32, 32, 32])

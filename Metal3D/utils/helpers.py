@@ -1,15 +1,77 @@
 import os
 import multiprocessing
 from multiprocessing import Pool
-from turtle import width
-
 import py3Dmol
 import numpy as np
-
+from Bio import SeqIO
+from Bio.PDB.Atom import Atom
+from Bio.PDB.Residue import Residue
 from moleculekit.molecule import Molecule
 from scipy.spatial import KDTree
 from sklearn.cluster import AgglomerativeClustering
-from tqdm.contrib.concurrent import process_map
+
+def remove_hetatms(structure):
+    for model in structure:
+        for chain in model:
+            for residue in list(chain):
+                if residue.id[0] != " ":
+                    chain.detach_child(residue.id)
+
+
+def rename_predicted_atoms(probes, ion_type, start_id):
+    unique_id = start_id
+    new_residues = []
+    for residue in probes.get_residues():
+        new_residue = Residue(("H_" + ion_type, unique_id, " "), ion_type, " ")
+        for atom in residue.get_atoms():
+            new_atom = Atom(
+                ion_type,
+                atom.coord,
+                atom.bfactor,
+                atom.occupancy,
+                atom.altloc,
+                atom.fullname,
+                atom.serial_number,
+                ion_type,
+            )
+            new_residue.add(new_atom)
+        new_residues.append(new_residue)
+        unique_id += 1
+    return new_residues
+
+
+def add_predicted_atoms(input_structure, new_residues):
+    chain_id = list(input_structure[0].child_dict.keys())[
+        0
+    ]  # Assuming only one chain for simplicity
+    chain = input_structure[0][chain_id]
+
+    for residue in new_residues:
+        chain.add(residue)
+
+
+def get_max_residue_id(structure):
+    max_id = 0
+    for model in structure:
+        for chain in model:
+            for residue in chain:
+                max_id = max(max_id, residue.id[1])
+    return max_id
+
+
+def remove_hetatms(structure):
+    for model in structure:
+        for chain in model:
+            for residue in list(chain):
+                if residue.id[0] != " ":
+                    chain.detach_child(residue.id)
+                    
+def read_fasta_ids(fasta_file):
+    """Read IDs from a FASTA file."""
+    ids = []
+    for record in SeqIO.parse(fasta_file, "fasta"):
+        ids.append(record.id)
+    return ids
 
 
 def create_grid_fromBB(boundingBox, voxelSize=1):
@@ -83,17 +145,16 @@ def get_all_protein_resids(pdb_file):
 
     Returns
     -------
-    resids : numpy.ndarray
-        Array of protein resids old -> new
-
+    resids : numpy.ndarray or None
+        Array of protein resids old -> new or None if reading fails
     """
     try:
         prot = Molecule(pdb_file)
-    except:
-        exit("could not read file")
-    prot.filter("protein and not hydrogen")
-    # mapping = prot.renumberResidues(returnMapping=True)
-    return prot.get("index", "protein and name CA")
+        prot.filter("protein and not hydrogen")
+        return prot.get("index", "protein and name CA")
+    except Exception as e:
+        print(f"Error reading file {pdb_file}: {e}")
+        return None
 
 
 def get_all_metalbinding_resids(pdb_file):
@@ -106,19 +167,19 @@ def get_all_metalbinding_resids(pdb_file):
 
     Returns
     -------
-    resids : numpy.ndarray
-        id of resids that are metal binding
-
+    resids : numpy.ndarray or None
+        id of resids that are metal binding or None if reading fails
     """
     try:
         prot = Molecule(pdb_file)
-    except:
-        exit("could not read file")
-    prot.filter("protein and not hydrogen")
-    return prot.get(
-        "index",
-        sel="name CA and resname HIS HID HIE HIP CYS CYX GLU GLH GLN ASP ASH ASN GLN MET",
-    )
+        prot.filter("protein and not hydrogen")
+        return prot.get(
+            "index",
+            sel="name CA and resname HIS HID HIE HIP CYS CYX GLU GLH GLN ASP ASH ASN GLN MET",
+        )
+    except Exception as e:
+        print(f"Error reading file {pdb_file}: {e}")
+        return None
 
 
 def compute_average_p_fast(point, cutoff=0.25):
@@ -228,13 +289,24 @@ def find_unique_sites(
     """The probability voxels are points and the voxel clouds may contain multiple metals
     This function finds the unique sites and returns the coordinates of the unique sites.
     It uses the AgglomerativeClustering algorithm to find the unique sites.
-    The threshold is the maximum distance between two points in the same cluster it can be changed to get more metal points."""
+    The threshold is the maximum distance between two points in the same cluster it can be changed to get more metal points.
+    """
 
     points = grid[pvalues > p]
     point_p = pvalues[pvalues > p]
     if len(points) == 0:
         print("no points available for clustering")
         return None
+    if len(points) < 2:
+        print("not enough points for clustering")
+        if writeprobes:
+            with open(probefile, "w") as f:
+                for i, point in enumerate(points):
+                    f.write(
+                        f"HETATM{str(i+1).rjust(5)}  ZN  ZN A{str(i+1).rjust(4)}    {point[0]:8.3f}{point[1]:8.3f}{point[2]:8.3f}  1.00{point_p[i]:6.2f}          ZN\n"
+                    )
+        return None
+
     clustering = AgglomerativeClustering(
         n_clusters=None, linkage="complete", distance_threshold=threshold
     ).fit(points)
@@ -253,7 +325,7 @@ def find_unique_sites(
         with open(probefile, "w") as f:
             for i, site in enumerate(sites):
                 f.write(
-                    f"HETATM  {i+1:3} ZN    ZN A  1    {site[0][0]: 8.3f}{site[0][1]: 8.3f}{site[0][2]: 8.3f}  {site[1]:.2f}  0.0           ZN2+\n"
+                    f"HETATM{str(i+1).rjust(5)}  ZN  ZN A{str(i+1).rjust(4)}    {site[0][0]:8.3f}{site[0][1]:8.3f}{site[0][2]:8.3f}  1.00{site[1]:6.2f}          ZN\n"
                 )
 
 
