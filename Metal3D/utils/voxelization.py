@@ -202,7 +202,7 @@ def processStructures(pdb_file, resids, clean=True):
     # remove None results
     results = [x for x in results if x is not None]
 
-    voxels = torch.empty(len(results), 8, 32, 32, 32, device="cuda")
+    voxels = torch.empty(len(results), 8, 32, 32, 32)
 
     if len(results) == 0:
         exit(

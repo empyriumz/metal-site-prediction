@@ -10,6 +10,7 @@ from moleculekit.molecule import Molecule
 from scipy.spatial import KDTree
 from sklearn.cluster import AgglomerativeClustering
 
+
 def remove_hetatms(structure):
     for model in structure:
         for chain in model:
@@ -65,7 +66,8 @@ def remove_hetatms(structure):
             for residue in list(chain):
                 if residue.id[0] != " ":
                     chain.detach_child(residue.id)
-                    
+
+
 def read_fasta_ids(fasta_file):
     """Read IDs from a FASTA file."""
     ids = []

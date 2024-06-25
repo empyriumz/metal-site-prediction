@@ -29,6 +29,7 @@ from Bio.PDB.PDBExceptions import PDBConstructionWarning
 # Suppress specific PDBConstructionWarnings
 warnings.simplefilter("ignore", PDBConstructionWarning)
 
+
 def process_cif_file(file_path, output_folder, model, device, args):
     base_name = os.path.basename(file_path).replace("_with_", "_").split(".")[0]
     ion_type = file_path.split("_with_")[-1].split(".")[0]
@@ -51,21 +52,21 @@ def process_cif_file(file_path, output_folder, model, device, args):
             return
 
         voxels, prot_centers, _, _ = processStructures(file_path, ids)
-        voxels.to(device)
-        model.eval()
+        voxels = voxels.to(device)
         outputs = torch.zeros([voxels.size()[0], 1, 32, 32, 32])
-        with warnings.catch_warnings():
+        with warnings.catch_warnings(), torch.no_grad():
             warnings.filterwarnings("ignore")
             for i in range(0, voxels.size()[0], args.batch_size):
-                o = model(voxels[i : i + args.batch_size])
-                outputs[i : i + args.batch_size] = o.cpu().detach()
+                batch = voxels[i : i + args.batch_size]
+                o = model(batch)
+                outputs[i : i + args.batch_size] = o.cpu()
 
+        outputs = outputs.flatten().numpy()
         prot_v = np.vstack(prot_centers)
-        output_v = outputs.flatten().numpy()
 
         bb = get_bb(prot_v)
         grid, box_N = create_grid_fromBB(bb)
-        probability_values = get_probability_mean(grid, prot_v, output_v)
+        probability_values = get_probability_mean(grid, prot_v, outputs)
 
         if args.writecube:
             write_cubefile(
@@ -170,13 +171,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--base_folder", help="Base folder containing ion subfolders", required=True
     )
+    parser.add_argument(
+        "--device", help="Device to use for computation", default="cuda:0"
+    )
     args = parser.parse_args()
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     model = Model()
     model.to(device)
-    model.load_state_dict(torch.load(f"weights/metal_0.5A_v3_d0.2_16Abox.pth"))
-    ion_list = ["ZN", "CU"]
+    model.load_state_dict(
+        torch.load(f"weights/metal_0.5A_v3_d0.2_16Abox.pth", map_location=device)
+    )
+    model.eval()
+    ion_list = ["FE"]
     for ion in ion_list:
         # Read IDs from the FASTA file
         fasta_ids = read_fasta_ids(
